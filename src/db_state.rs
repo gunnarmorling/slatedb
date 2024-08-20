@@ -41,7 +41,7 @@ impl SsTableId {
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct SortedRun {
+pub struct SortedRun {
     pub(crate) id: u32,
     pub(crate) ssts: Vec<SSTableHandle>,
 }
@@ -85,7 +85,7 @@ pub(crate) struct COWDbState {
 }
 // represents the core db state that we persist in the manifest
 #[derive(Clone, PartialEq)]
-pub(crate) struct CoreDbState {
+pub struct CoreDbState {
     pub(crate) l0_last_compacted: Option<Ulid>,
     pub(crate) l0: VecDeque<SSTableHandle>,
     pub(crate) compacted: Vec<SortedRun>,

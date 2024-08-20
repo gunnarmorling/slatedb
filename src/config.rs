@@ -1,13 +1,12 @@
 use std::{str::FromStr, time::Duration};
+use std::sync::Arc;
+use crate::compactor::CompactionScheduler;
 
 use crate::error::SlateDBError;
+use crate::size_tiered_compaction::SizeTieredCompactionSchedulerSupplier;
 
 pub const DEFAULT_READ_OPTIONS: &ReadOptions = &ReadOptions::default();
 pub const DEFAULT_WRITE_OPTIONS: &WriteOptions = &WriteOptions::default();
-pub const DEFAULT_DB_OPTIONS: &DbOptions = &DbOptions::default();
-
-#[allow(dead_code)]
-pub const DEFAULT_COMPACTOR_OPTIONS: &CompactorOptions = &CompactorOptions::default();
 
 /// Whether reads see only writes that have been committed durably to the DB.  A
 /// write is considered durably committed if all future calls to read are guaranteed
@@ -127,7 +126,7 @@ pub struct DbOptions {
 }
 
 impl DbOptions {
-    pub const fn default() -> Self {
+    pub fn default() -> Self {
         Self {
             flush_interval: Duration::from_millis(100),
             #[cfg(feature = "wal_disable")]
@@ -139,19 +138,6 @@ impl DbOptions {
             compression_codec: None,
         }
     }
-}
-
-/// Options for the compactor.
-#[derive(Clone)]
-pub struct CompactorOptions {
-    /// The interval at which the compactor checks for a new manifest and decides
-    /// if a compaction must be scheduled
-    pub(crate) poll_interval: Duration,
-
-    /// A compacted SSTable's maximum size (in bytes). If more data needs to be
-    /// written to a Sorted Run during a compaction, a new SSTable will be created
-    /// in the Sorted Run when this size is exceeded.
-    pub(crate) max_sst_size: usize,
 }
 
 /// The compression algorithm to use for SSTables.
@@ -189,15 +175,69 @@ impl FromStr for CompressionCodec {
     }
 }
 
+pub trait CompactionSchedulerSupplier: Send + Sync {
+    fn compaction_scheduler(&self) -> Box<dyn CompactionScheduler>;
+}
+
+/// Options for the compactor.
+#[derive(Clone)]
+pub struct CompactorOptions {
+    /// The interval at which the compactor checks for a new manifest and decides
+    /// if a compaction must be scheduled
+    pub poll_interval: Duration,
+
+    /// A compacted SSTable's maximum size (in bytes). If more data needs to be
+    /// written to a Sorted Run during a compaction, a new SSTable will be created
+    /// in the Sorted Run when this size is exceeded.
+    pub max_sst_size: usize,
+
+    /// Supplies the compaction scheduler to use to select the compactions that should be
+    /// scheduled. Currently, the only provided implementation is
+    /// SizeTieredCompactionSchedulerSupplier
+    pub compaction_scheduler: Arc<dyn CompactionSchedulerSupplier>,
+
+    /// The maximum number of concurrent compactions to execute at once
+    pub max_concurrent_compactions: usize,
+}
+
 /// Default options for the compactor. Currently, only a
 /// `SizeTieredCompactionScheduler` compaction strategy is implemented.
 impl CompactorOptions {
     /// Returns a `CompactorOptions` with a 5 second poll interval and a 1GB max
     /// SSTable size.
-    pub const fn default() -> Self {
+    pub fn default() -> Self {
         Self {
             poll_interval: Duration::from_secs(5),
             max_sst_size: 1024 * 1024 * 1024,
+            compaction_scheduler: Arc::new(
+                SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default()
+                )
+            ),
+            max_concurrent_compactions: 4,
+        }
+    }
+}
+
+#[derive(Clone)]
+/// Options for the Size-Tiered Compaction Scheduler
+pub struct SizeTieredCompactionSchedulerOptions {
+    /// The minimum number of sources to include together in a single compaction step.
+    pub min_compaction_sources: usize,
+    /// The maximum number of sources to include together in a single compaction step.
+    pub max_compaction_sources: usize,
+    /// The size threshold that the scheduler will use to determine if a sorted run should
+    /// be included in a given compaction. A sorted run S will be added to a compaction C if S's
+    /// size is less than this value times the average size of the runs currently included in C.
+    pub include_size_threshold: f32
+}
+
+impl SizeTieredCompactionSchedulerOptions {
+    pub const fn default() -> Self {
+        Self {
+            min_compaction_sources: 4,
+            max_compaction_sources: 8,
+            include_size_threshold: 4.0,
         }
     }
 }

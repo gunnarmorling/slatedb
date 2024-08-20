@@ -417,7 +417,7 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CompactorOptions;
+    use crate::config::{CompactorOptions, SizeTieredCompactionSchedulerOptions};
     use crate::sst_iter::SstIterator;
     #[cfg(feature = "wal_disable")]
     use crate::test_utils::assert_iterator;
@@ -425,6 +425,7 @@ mod tests {
     use object_store::ObjectStore;
     use std::time::Duration;
     use tracing::info;
+    use crate::size_tiered_compaction::SizeTieredCompactionSchedulerSupplier;
 
     #[tokio::test]
     async fn test_put_get_delete() {
@@ -933,6 +934,10 @@ mod tests {
             Some(CompactorOptions {
                 poll_interval: Duration::from_millis(100),
                 max_sst_size: 256,
+                compaction_scheduler: Arc::new(SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default())
+                ),
+                max_concurrent_compactions: 1,
             }),
         ))
         .await;
@@ -946,6 +951,10 @@ mod tests {
             Some(CompactorOptions {
                 poll_interval: Duration::from_millis(100),
                 max_sst_size: 256,
+                compaction_scheduler: Arc::new(SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default())
+                ),
+                max_concurrent_compactions: 1,
             }),
         ))
         .await

@@ -5,7 +5,6 @@ use crate::config::CompactorOptions;
 use crate::db_state::{SSTableHandle, SortedRun};
 use crate::error::SlateDBError;
 use crate::manifest_store::{FenceableManifest, ManifestStore, StoredManifest};
-use crate::size_tiered_compaction::SizeTieredCompactionScheduler;
 use crate::tablestore::TableStore;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ use tokio::runtime::Handle;
 use tracing::{error, warn};
 use ulid::Ulid;
 
-pub(crate) trait CompactionScheduler {
+pub trait CompactionScheduler {
     fn maybe_schedule_compaction(&self, state: &CompactorState) -> Vec<Compaction>;
 }
 
@@ -124,9 +123,8 @@ impl CompactorOrchestrator {
         Ok(orchestrator)
     }
 
-    fn load_compaction_scheduler(_options: &CompactorOptions) -> Box<dyn CompactionScheduler> {
-        // todo: return the right type based on the configured scheduler
-        Box::new(SizeTieredCompactionScheduler {})
+    fn load_compaction_scheduler(options: &CompactorOptions) -> Box<dyn CompactionScheduler> {
+        options.compaction_scheduler.compaction_scheduler()
     }
 
     fn load_state(stored_manifest: &FenceableManifest) -> Result<CompactorState, SlateDBError> {
@@ -191,6 +189,15 @@ impl CompactorOrchestrator {
     fn maybe_schedule_compactions(&mut self) -> Result<(), SlateDBError> {
         let compactions = self.scheduler.maybe_schedule_compaction(&self.state);
         for compaction in compactions.iter() {
+            if self.state.num_compactions() >= self.options.max_concurrent_compactions {
+                println!(
+                    "already running {} compactions, which is at the max {}. Won't run compaction {:?}",
+                    self.state.num_compactions(),
+                    self.options.max_concurrent_compactions,
+                    compaction
+                );
+                break;
+            }
             self.submit_compaction(compaction.clone())?;
         }
         Ok(())
@@ -256,7 +263,7 @@ impl CompactorOrchestrator {
 mod tests {
     use crate::compactor::{CompactorOptions, CompactorOrchestrator, WorkerToOrchestratorMsg};
     use crate::compactor_state::{Compaction, SourceId};
-    use crate::config::DbOptions;
+    use crate::config::{DbOptions, SizeTieredCompactionSchedulerOptions};
     use crate::db::Db;
     use crate::iter::KeyValueIterator;
     use crate::manifest_store::{ManifestStore, StoredManifest};
@@ -271,17 +278,14 @@ mod tests {
     use std::time::{Duration, SystemTime};
     use tokio::runtime::Runtime;
     use ulid::Ulid;
+    use crate::size_tiered_compaction::{SizeTieredCompactionSchedulerSupplier};
 
     const PATH: &str = "/test/db";
-    const COMPACTOR_OPTIONS: CompactorOptions = CompactorOptions {
-        poll_interval: Duration::from_millis(100),
-        max_sst_size: 1024 * 1024 * 1024,
-    };
 
     #[tokio::test]
     async fn test_compactor_compacts_l0() {
         // given:
-        let options = db_options(Some(COMPACTOR_OPTIONS.clone()));
+        let options = db_options(Some(compactor_options()));
         let (_, manifest_store, table_store, db) = build_test_db(options).await;
         for i in 0..4 {
             db.put(&[b'a' + i as u8; 16], &[b'b' + i as u8; 48]).await;
@@ -341,7 +345,7 @@ mod tests {
         rt.block_on(db.close()).unwrap();
         let (_, external_rx) = crossbeam_channel::unbounded();
         let mut orchestrator = CompactorOrchestrator::new(
-            COMPACTOR_OPTIONS.clone(),
+            compactor_options(),
             manifest_store.clone(),
             table_store.clone(),
             rt.handle().clone(),
@@ -446,6 +450,19 @@ mod tests {
             l0_sst_size_bytes: 128,
             compactor_options,
             compression_codec: None,
+        }
+    }
+
+    fn compactor_options() -> CompactorOptions {
+        CompactorOptions {
+            poll_interval: Duration::from_millis(100),
+            max_sst_size: 1024 * 1024 * 1024,
+            compaction_scheduler: Arc::new(
+                SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default()
+                )
+            ),
+            max_concurrent_compactions: 1,
         }
     }
 }
