@@ -35,3 +35,5 @@ mod tablestore;
 mod test_utils;
 mod transactional_object_store;
 mod types;
+#[cfg(feature = "db_bench")]
+mod db_bench;
