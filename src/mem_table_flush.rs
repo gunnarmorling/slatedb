@@ -4,6 +4,7 @@ use crate::error::SlateDBError;
 use crate::manifest_store::FenceableManifest;
 use std::sync::Arc;
 use tokio::runtime::Handle;
+use tracing::warn;
 use ulid::Ulid;
 
 pub(crate) enum MemtableFlushThreadMsg {
@@ -48,8 +49,17 @@ impl MemtableFlusher {
     pub(crate) async fn flush_imm_memtables_to_l0(&mut self) -> Result<(), SlateDBError> {
         while let Some(imm_memtable) = {
             let rguard = self.db_inner.state.read();
-            rguard.state().imm_memtable.back().cloned()
+            if rguard.state().core.l0.len() >= self.db_inner.options.l0_max_ssts {
+                warn!("too many l0 files {} > {}. Won't flush imm to l0",
+                    rguard.state().core.l0.len(),
+                    self.db_inner.options.l0_max_ssts
+                );
+                None
+            } else {
+                rguard.state().imm_memtable.back().cloned()
+            }
         } {
+
             let id = SsTableId::Compacted(Ulid::new());
             let sst_handle = self
                 .db_inner
@@ -90,6 +100,10 @@ impl DbInner {
                         if !is_stopped {
                             if let Err(err) = flusher.load_manifest().await {
                                 print!("error loading manifest: {}", err);
+                            }
+                            match flusher.flush_imm_memtables_to_l0().await {
+                                Ok(_) => {}
+                                Err(err) => print!("error from memtable flush: {}", err),
                             }
                         }
                     }

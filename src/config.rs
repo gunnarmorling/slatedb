@@ -120,6 +120,14 @@ pub struct DbOptions {
     ///   secondary readers to see new data.
     pub l0_sst_size_bytes: usize,
 
+    /// Defines the max number of SSTs in l0. Writes will be paused if there are more
+    /// l0 ssts than this value, until compaction can compact the ssts into compacted.
+    pub l0_max_ssts: usize,
+
+    /// Defines the max number of unflushed memtables. Writes will be paused if there
+    /// are more unflushed memtables than this value
+    pub max_unflushed_memtable: usize,
+
     /// Configuration options for the compactor.
     pub compactor_options: Option<CompactorOptions>,
     pub compression_codec: Option<CompressionCodec>,
@@ -134,6 +142,8 @@ impl DbOptions {
             manifest_poll_interval: Duration::from_secs(1),
             min_filter_keys: 1000,
             l0_sst_size_bytes: 128,
+            max_unflushed_memtable: 2,
+            l0_max_ssts: 8,
             compactor_options: Some(CompactorOptions::default()),
             compression_codec: None,
         }

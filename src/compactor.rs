@@ -448,6 +448,8 @@ mod tests {
             manifest_poll_interval: Duration::from_millis(100),
             min_filter_keys: 0,
             l0_sst_size_bytes: 128,
+            max_unflushed_memtable: 2,
+            l0_max_ssts: 8,
             compactor_options,
             compression_codec: None,
         }
