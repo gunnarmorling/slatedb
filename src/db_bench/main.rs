@@ -6,7 +6,7 @@ use s3::load_aws_creds;
 use slatedb::config::DbOptions;
 use slatedb::db::Db;
 use slatedb::error::SlateDBError;
-use crate::args::{DbBenchArgs, DbBenchCommand, parse_args};
+use crate::args::{DbBenchArgs, DbBenchCommand, parse_args, Provider};
 use crate::db_bench::DbBench;
 
 #[cfg(feature = "db_bench")] mod args;
@@ -18,23 +18,32 @@ fn main() {
     panic!("db_bench not enabled")
 }
 
+#[cfg(feature = "db_bench")]
 fn load_object_store(args: &DbBenchArgs) -> Result<Arc<dyn ObjectStore>, SlateDBError> {
-    #[cfg(feature = "aws")]
-    {
-        let (aws_key, aws_secret) = load_aws_creds();
-        Ok(Arc::new(
-            object_store::aws::AmazonS3Builder::new()
-                .with_access_key_id(aws_key.as_str())
-                .with_secret_access_key(aws_secret.as_str())
-                .with_bucket_name(args.bucket.as_str())
-                .with_region(args.region.as_str())
-                .build()?,
-        ))
-    }
-    #[cfg(not(feature = "aws"))]
-    {
-        panic!("feature aws must be enabled to run db bench")
-    }
+    let os = match args.provider {
+        Provider::Aws => {
+            #[cfg(feature = "aws")]
+            {
+                let (aws_key, aws_secret) = load_aws_creds();
+                Arc::new(
+                    object_store::aws::AmazonS3Builder::new()
+                        .with_access_key_id(aws_key.as_str())
+                        .with_secret_access_key(aws_secret.as_str())
+                        .with_bucket_name(args.bucket.as_str())
+                        .with_region(args.region.as_str())
+                        .build()?,
+                ) as Arc<dyn ObjectStore>
+            }
+            #[cfg(not(feature = "aws"))]
+            {
+                panic!("feature aws must be enabled to run db bench")
+            }
+        },
+        Provider::InMemory => Arc::new(
+            object_store::memory::InMemory::new()
+        ) as Arc<dyn ObjectStore>
+    };
+    Ok(os)
 }
 
 

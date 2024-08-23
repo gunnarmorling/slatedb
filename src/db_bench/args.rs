@@ -12,6 +12,8 @@ pub(crate) struct DbBenchArgs {
     #[arg(short, long)]
     pub(crate) region: String,
     #[arg(short, long)]
+    pub(crate) provider: Provider,
+    #[arg(short, long)]
     pub(crate) path: String,
     #[arg(long)]
     pub(crate) flush_ms: Option<u32>,
@@ -24,7 +26,6 @@ pub(crate) struct DbBenchArgs {
 pub(crate) fn parse_args() -> DbBenchArgs {
     DbBenchArgs::parse()
 }
-
 
 #[derive(Subcommand, Clone)]
 pub(crate) enum DbBenchCommand {
@@ -71,6 +72,37 @@ impl WriteArgs {
         WriteOptions {
             await_flush: self.await_flush,
         }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum Provider {
+    Aws,
+    InMemory,
+}
+
+const PROVIDER_AWS: &str = "aws";
+const PROVIDER_MEMORY: &str = "memory";
+
+impl ValueEnum for Provider {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Provider::Aws, Provider::InMemory]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        match self {
+            Provider::Aws => Some(PossibleValue::new(PROVIDER_AWS)),
+            Provider::InMemory => Some(PossibleValue::new(PROVIDER_MEMORY))
+        }
+    }
+}
+
+impl Display for Provider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Provider::Aws => PROVIDER_AWS,
+            Provider::InMemory => PROVIDER_MEMORY
+        })
     }
 }
 
