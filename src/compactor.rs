@@ -1,6 +1,6 @@
 use crate::compactor::CompactorMainMsg::Shutdown;
 use crate::compactor_executor::{CompactionExecutor, CompactionJob, TokioCompactionExecutor};
-use crate::compactor_state::{Compaction, CompactorState};
+use crate::compactor_state::{Compaction, CompactorState, SourceId};
 use crate::config::CompactorOptions;
 use crate::db_state::{SSTableHandle, SortedRun};
 use crate::error::SlateDBError;
@@ -136,14 +136,14 @@ impl CompactorOrchestrator {
 
     fn run(&mut self) {
         let ticker = crossbeam_channel::tick(self.options.poll_interval);
-        let db_runs_log_ticker = crossbeam_channel::tick(Duration::from_secs(60));
+        let db_runs_log_ticker = crossbeam_channel::tick(Duration::from_secs(10));
 
         // Stop the loop when the executor is shut down *and* all remaining
         // `worker_rx` messages have been drained.
         while !(self.executor.is_stopped() && self.worker_rx.is_empty()) {
             crossbeam_channel::select! {
                 recv(db_runs_log_ticker) -> _ => {
-                    self.log_db_runs();
+                    self.log_compaction_state();
                 }
                 recv(ticker) -> _ => {
                     if !self.executor.is_stopped() {
@@ -210,7 +210,7 @@ impl CompactorOrchestrator {
     }
 
     fn start_compaction(&mut self, compaction: Compaction) {
-        self.log_db_runs();
+        self.log_compaction_state();
         let db_state = self.state.db_state();
         let compacted_sst_iter = db_state.compacted.iter().flat_map(|sr| sr.ssts.iter());
         let ssts_by_id: HashMap<Ulid, &SSTableHandle> = db_state
@@ -244,7 +244,7 @@ impl CompactorOrchestrator {
 
     fn finish_compaction(&mut self, output_sr: SortedRun) -> Result<(), SlateDBError> {
         self.state.finish_compaction(output_sr);
-        self.log_db_runs();
+        self.log_compaction_state();
         self.write_manifest_safely()?;
         self.maybe_schedule_compactions()?;
         Ok(())
@@ -266,8 +266,18 @@ impl CompactorOrchestrator {
         Ok(())
     }
 
-    fn log_db_runs(&self) {
+    fn log_compaction_state(&self) {
         self.state.db_state().log_db_runs();
+        let compactions = self.state.compactions();
+        for compaction in compactions.iter() {
+            let sources: Vec<_> = compaction.sources.iter()
+                .map(|src| match src {
+                    SourceId::SortedRun(id) => {format!("{}", *id)}
+                    SourceId::Sst(_) => {String::from("l0")}
+                })
+                .collect();
+            info!("in-flight compaction: {:?} -> {}", sources, compaction.destination)
+        }
     }
 }
 
