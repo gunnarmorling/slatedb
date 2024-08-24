@@ -277,16 +277,16 @@ async fn dump_stats(stats: Arc<StatsRecorder>) {
     loop {
         let records_written = stats.records_written();
         let records_written_since = stats.records_written_since(Instant::now() - Duration::from_secs(60));
-        let write_rate = if let Some((last, start, records_written)) = records_written_since {
+        let (write_rate, interval) = if let Some((last, start, records_written)) = records_written_since {
             let interval = last - start;
-            records_written as f32 / interval.as_secs() as f32
+            (records_written as f32 / interval.as_secs() as f32, interval)
         } else {
-            0f32
+            (0f32, Duration::from_secs(0))
         };
         println!("Stats Dump:");
         println!("---------------------------------------");
         println!("records written: {}", records_written);
-        println!("write rate: {}/second", write_rate);
+        println!("write rate: {}/second over {:?}", write_rate, interval);
         println!();
         tokio::time::sleep(STAT_DUMP_INTERVAL).await;
     }

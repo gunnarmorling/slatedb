@@ -54,6 +54,7 @@ impl MemtableFlusher {
                     rguard.state().core.l0.len(),
                     self.db_inner.options.l0_max_ssts
                 );
+                rguard.state().core.log_db_runs();
                 None
             } else {
                 rguard.state().imm_memtable.back().cloned()

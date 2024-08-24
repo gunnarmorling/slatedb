@@ -197,7 +197,7 @@ impl DbInner {
             let table = {
                 let guard = self.state.read();
                 let state = guard.state();
-                if state.imm_memtable.len() < self.options.max_unflushed_memtable {
+                if state.imm_memtable.len() <= self.options.max_unflushed_memtable {
                     return;
                 }
                 let Some(table) = state.imm_memtable.back() else {

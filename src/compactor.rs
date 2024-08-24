@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
+use std::time::Duration;
+use log::info;
 use tokio::runtime::Handle;
 use tracing::{error, warn};
 use ulid::Ulid;
@@ -134,11 +136,15 @@ impl CompactorOrchestrator {
 
     fn run(&mut self) {
         let ticker = crossbeam_channel::tick(self.options.poll_interval);
+        let db_runs_log_ticker = crossbeam_channel::tick(Duration::from_secs(60));
 
         // Stop the loop when the executor is shut down *and* all remaining
         // `worker_rx` messages have been drained.
         while !(self.executor.is_stopped() && self.worker_rx.is_empty()) {
             crossbeam_channel::select! {
+                recv(db_runs_log_ticker) -> _ => {
+                    self.log_db_runs();
+                }
                 recv(ticker) -> _ => {
                     if !self.executor.is_stopped() {
                         self.load_manifest().expect("fatal error loading manifest");
@@ -204,6 +210,7 @@ impl CompactorOrchestrator {
     }
 
     fn start_compaction(&mut self, compaction: Compaction) {
+        self.log_db_runs();
         let db_state = self.state.db_state();
         let compacted_sst_iter = db_state.compacted.iter().flat_map(|sr| sr.ssts.iter());
         let ssts_by_id: HashMap<Ulid, &SSTableHandle> = db_state
@@ -237,6 +244,7 @@ impl CompactorOrchestrator {
 
     fn finish_compaction(&mut self, output_sr: SortedRun) -> Result<(), SlateDBError> {
         self.state.finish_compaction(output_sr);
+        self.log_db_runs();
         self.write_manifest_safely()?;
         self.maybe_schedule_compactions()?;
         Ok(())
@@ -256,6 +264,10 @@ impl CompactorOrchestrator {
         self.state.refresh_db_state(self.manifest.db_state()?);
         self.maybe_schedule_compactions()?;
         Ok(())
+    }
+
+    fn log_db_runs(&self) {
+        self.state.db_state().log_db_runs();
     }
 }
 

@@ -167,18 +167,6 @@ impl CompactionScheduler for SizeTieredCompactionScheduler {
             compactions.push(compaction);
         }
 
-        if compactions.len() > 0 {
-            let l0_sizes: Vec<u64> = l0.iter().map(|src| src.size).collect();
-            let compacted_sizes: Vec<(u32, u64)> = srs
-                .iter()
-                .map(|src| (src.source.unwrap_sorted_run(), src.size))
-                .collect();
-            info!("LEVELS SUMMARY");
-            info!("---------------------------");
-            info!("l0 sizes: {:?}", l0_sizes);
-            info!("compacted: {:?}", compacted_sizes);
-        }
-
         compactions
     }
 }
@@ -290,31 +278,16 @@ impl SizeTieredCompactionScheduler{
             db_state.l0.iter()
                 .map(|l0| CompactionSource{
                     source: SourceId::Sst(l0.id.unwrap_compacted_id()),
-                    size: self.sst_size_estimate(l0)
+                    size: l0.estimate_size(),
                 })
                 .collect(),
             db_state.compacted.iter()
                 .map(|sr| CompactionSource{
                     source: SourceId::SortedRun(sr.id),
-                    size: self.sr_size_estimate(sr)
+                    size: sr.estimate_size(),
                 })
                 .collect()
         )
-    }
-
-    fn sst_size_estimate(&self, sst: &SSTableHandle) -> u64 {
-        let info = sst.info.borrow();
-        // this is a hacky estimate of the sst size since we don't have it stored anywhere
-        // right now. Just use the filter's offset and add the filter length. Since the filter
-        // is the last thing we put in the SST before the info footer, this should be a good
-        // estimate for now.
-        return info.index_offset() + info.index_len();
-    }
-
-    fn sr_size_estimate(&self, sr: &SortedRun) -> u64 {
-        sr.ssts.iter()
-            .map(|sst| self.sst_size_estimate(sst))
-            .sum()
     }
 }
 
