@@ -99,7 +99,7 @@ impl BackpressureChecker {
                 if self.longest_compactable_runs_by_sr
                     .get(&next_sr.source.unwrap_sorted_run())
                     .map(|r| r.len())
-                    .unwrap_or(0) >= self.max_compaction_sources * 2 {
+                    .unwrap_or(0) >= self.max_compaction_sources {
                     return false;
                 }
             }
