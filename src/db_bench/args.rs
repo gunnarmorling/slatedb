@@ -8,10 +8,10 @@ use crate::db_bench::{KeyGenerator, RandomKeyGenerator};
 #[command(version, about, long_about=None)]
 pub(crate) struct DbBenchArgs {
     #[arg(short, long)]
-    pub(crate) bucket: String,
+    pub(crate) bucket: Option<String>,
     #[arg(short, long)]
-    pub(crate) region: String,
-    #[arg(short, long)]
+    pub(crate) region: Option<String>,
+    #[arg(short='c', long)]
     pub(crate) provider: Provider,
     #[arg(short, long)]
     pub(crate) path: String,

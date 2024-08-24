@@ -1,10 +1,11 @@
-
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use bytes::{Bytes, BytesMut};
 use leaky_bucket::RateLimiter;
 use rand::{RngCore, SeedableRng};
 use rand_xorshift::XorShiftRng;
+use tokio::time::Instant;
 use slatedb::config::WriteOptions;
 use slatedb::db::Db;
 
@@ -30,9 +31,9 @@ impl RandomKeyGenerator {
 
 impl KeyGenerator for RandomKeyGenerator {
     fn next_key(&mut self) -> Bytes {
-        let mut bytes = BytesMut::with_capacity(self.key_bytes);
-        self.rng.fill_bytes(bytes.as_mut());
-        bytes.freeze()
+        let mut bytes = vec![0u8; self.key_bytes];
+        self.rng.fill_bytes(bytes.as_mut_slice());
+        Bytes::copy_from_slice(bytes.as_slice())
     }
 }
 
@@ -83,6 +84,7 @@ impl DbBench {
                 .refill((r / 1000) as usize)
                 .build()
         ));
+        let stats_recorder = Arc::new(StatsRecorder::new());
         let mut write_tasks = Vec::new();
         for _ in 0..self.write_tasks {
             let mut write_task = WriteTask::new(
@@ -92,12 +94,14 @@ impl DbBench {
                 self.num_rows.clone(),
                 self.duration.clone(),
                 rate_limiter.clone(),
+                stats_recorder.clone(),
                 self.db.clone()
             );
             write_tasks.push(
                 tokio::spawn(async move { write_task.run().await })
             );
         }
+        tokio::spawn(async move { dump_stats(stats_recorder).await });
         for write_task in write_tasks {
             write_task.await.unwrap();
         }
@@ -111,6 +115,7 @@ struct WriteTask {
     num_keys: Option<u64>,
     duration: Option<Duration>,
     rate_limiter: Option<Arc<RateLimiter>>,
+    stats_recorder: Arc<StatsRecorder>,
     db: Arc<Db>,
 }
 
@@ -122,6 +127,7 @@ impl WriteTask {
         num_keys: Option<u64>,
         duration: Option<Duration>,
         rate_limiter: Option<Arc<RateLimiter>>,
+        stats_recorder: Arc<StatsRecorder>,
         db: Arc<Db>,
     ) -> Self {
         Self {
@@ -131,6 +137,7 @@ impl WriteTask {
             num_keys,
             duration,
             rate_limiter,
+            stats_recorder,
             db,
         }
     }
@@ -152,11 +159,132 @@ impl WriteTask {
             }
             for _ in 0..write_batch {
                 let key = self.key_generator.next_key();
-                let mut value = Vec::with_capacity(self.val_size);
+                let mut value = vec![0; self.val_size];
                 val_rng.fill_bytes(value.as_mut_slice());
                 self.db.put_with_options(key.as_ref(), value.as_ref(), &self.write_options).await;
             }
+            self.stats_recorder.record_records_written(write_batch as u64);
             keys_written += write_batch as u64;
         }
+    }
+}
+
+const WINDOW_SIZE: Duration = Duration::from_secs(10);
+
+struct Window {
+    start: Instant,
+    last: Instant,
+    value: f32,
+}
+
+struct StatsRecorderInner {
+    records_written: u64,
+    records_written_windows: VecDeque<Window>
+}
+
+impl StatsRecorderInner {
+    fn maybe_roll_window(now: Instant, windows: &mut VecDeque<Window>) {
+        let Some(front) = windows.front() else {
+            windows.push_front(Window{
+                start: now,
+                value: 0f32,
+                last: now,
+            });
+            return;
+        };
+        let mut front_start = front.start;
+        while now.duration_since(front_start) > WINDOW_SIZE {
+            windows.push_front(Window {
+                start: front_start + WINDOW_SIZE,
+                value: 0f32,
+                last: now,
+            });
+            front_start = windows.front().unwrap().start;
+            while windows.len() > 180 {
+                windows.pop_back();
+            }
+        }
+    }
+
+    fn record_records_written(&mut self, now: Instant, records: u64) {
+        Self::maybe_roll_window(now, &mut self.records_written_windows);
+        if let Some(front) = self.records_written_windows.front_mut() {
+            front.value += records as f32;
+            front.last = now;
+        }
+        self.records_written += records;
+    }
+
+    fn records_written(&self) -> u64 {
+        self.records_written
+    }
+
+    fn sum_windows(windows: &VecDeque<Window>, since: Instant) -> Option<(Instant, Instant, f32)> {
+        let sum: f32 = windows.iter()
+            .filter(|w| w.start > since)
+            .map(|w| w.value)
+            .sum();
+        let start = windows.iter()
+            .filter(|w| w.start > since)
+            .map(|w| w.start)
+            .min();
+        windows.front().map(|w| (w.start, start.unwrap(), sum))
+    }
+
+    fn records_written_since(&self, since: Instant) -> Option<(Instant, Instant, u64)> {
+        Self::sum_windows(&self.records_written_windows, since)
+            .map(|r| (r.0, r.1, r.2 as u64))
+    }
+}
+
+struct StatsRecorder {
+    inner: Mutex<StatsRecorderInner>
+}
+
+impl StatsRecorder {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(StatsRecorderInner{
+                records_written: 0,
+                records_written_windows: VecDeque::new(),
+            })
+        }
+    }
+
+    fn record_records_written(&self, records: u64) {
+        let now = Instant::now();
+        let mut guard = self.inner.lock().expect("lock failed");
+        guard.record_records_written(now, records);
+    }
+
+    fn records_written(&self) -> u64 {
+        let guard = self.inner.lock().expect("lock failed");
+        guard.records_written()
+    }
+
+    fn records_written_since(&self, since: Instant) -> Option<(Instant, Instant, u64)> {
+        let guard = self.inner.lock().expect("lock failed");
+        guard.records_written_since(since)
+    }
+}
+
+const STAT_DUMP_INTERVAL: Duration = Duration::from_secs(10);
+
+async fn dump_stats(stats: Arc<StatsRecorder>) {
+    loop {
+        let records_written = stats.records_written();
+        let records_written_since = stats.records_written_since(Instant::now() - Duration::from_secs(60));
+        let write_rate = if let Some((last, start, records_written)) = records_written_since {
+            let interval = last - start;
+            records_written as f32 / interval.as_secs() as f32
+        } else {
+            0f32
+        };
+        println!("Stats Dump:");
+        println!("---------------------------------------");
+        println!("records written: {}", records_written);
+        println!("write rate: {}/second", write_rate);
+        println!();
+        tokio::time::sleep(STAT_DUMP_INTERVAL).await;
     }
 }

@@ -2,6 +2,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::Peekable;
 use std::slice::Iter;
+use log::info;
 use crate::compactor::CompactionScheduler;
 use crate::compactor_state::{Compaction, CompactorState, SourceId};
 use crate::config::{CompactionSchedulerSupplier, SizeTieredCompactionSchedulerOptions};
@@ -164,6 +165,18 @@ impl CompactionScheduler for SizeTieredCompactionScheduler {
             };
             checker.conflict_checker.add_compaction(&compaction);
             compactions.push(compaction);
+        }
+
+        if compactions.len() > 0 {
+            let l0_sizes: Vec<u64> = l0.iter().map(|src| src.size).collect();
+            let compacted_sizes: Vec<(u32, u64)> = srs
+                .iter()
+                .map(|src| (src.source.unwrap_sorted_run(), src.size))
+                .collect();
+            info!("LEVELS SUMMARY");
+            info!("---------------------------");
+            info!("l0 sizes: {:?}", l0_sizes);
+            info!("compacted: {:?}", compacted_sizes);
         }
 
         compactions

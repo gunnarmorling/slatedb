@@ -6,11 +6,12 @@ use s3::load_aws_creds;
 use slatedb::config::DbOptions;
 use slatedb::db::Db;
 use slatedb::error::SlateDBError;
-use crate::args::{DbBenchArgs, DbBenchCommand, parse_args, Provider};
-use crate::db_bench::DbBench;
+#[cfg(feature = "db_bench")] use crate::args::{DbBenchArgs, DbBenchCommand, parse_args, Provider};
+#[cfg(feature = "db_bench")] use crate::db_bench::DbBench;
+#[cfg(feature = "db_bench")] use env_logger;
 
 #[cfg(feature = "db_bench")] mod args;
-mod db_bench;
+#[cfg(feature = "db_bench")] mod db_bench;
 #[cfg(feature = "aws")] mod s3;
 
 #[cfg(not(feature = "db_bench"))]
@@ -29,8 +30,8 @@ fn load_object_store(args: &DbBenchArgs) -> Result<Arc<dyn ObjectStore>, SlateDB
                     object_store::aws::AmazonS3Builder::new()
                         .with_access_key_id(aws_key.as_str())
                         .with_secret_access_key(aws_secret.as_str())
-                        .with_bucket_name(args.bucket.as_str())
-                        .with_region(args.region.as_str())
+                        .with_bucket_name(args.bucket.as_ref().unwrap().as_str())
+                        .with_region(args.region.as_ref().unwrap().as_str())
                         .build()?,
                 ) as Arc<dyn ObjectStore>
             }
@@ -50,6 +51,7 @@ fn load_object_store(args: &DbBenchArgs) -> Result<Arc<dyn ObjectStore>, SlateDB
 #[cfg(feature = "db_bench")]
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let args: DbBenchArgs = parse_args();
     let mut db_options = DbOptions::default();
     db_options.wal_enabled = !args.disable_wal.unwrap_or(false);

@@ -69,6 +69,7 @@ impl MemtableFlusher {
                 let mut guard = self.db_inner.state.write();
                 guard.move_imm_memtable_to_l0(imm_memtable.clone(), sst_handle);
             }
+            imm_memtable.table().notify_flush();
             self.write_manifest_safely().await?;
         }
         Ok(())
