@@ -59,6 +59,7 @@ async fn main() {
         .flush_ms
         .map(|i| Duration::from_millis(i as u64))
         .unwrap_or(db_options.flush_interval);
+    db_options.l0_sst_size_bytes = args.l0_sst_size_bytes.unwrap_or(db_options.l0_sst_size_bytes);
     let path = Path::from(args.path.as_str());
     let os = load_object_store(&args).expect("failed to open object store");
     let db = Arc::new(

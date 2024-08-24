@@ -19,6 +19,8 @@ pub(crate) struct DbBenchArgs {
     pub(crate) flush_ms: Option<u32>,
     #[arg(long)]
     pub(crate) disable_wal: Option<bool>,
+    #[arg(long)]
+    pub(crate) l0_sst_size_bytes: Option<usize>,
     #[command(subcommand)]
     pub(crate) command: DbBenchCommand
 }
