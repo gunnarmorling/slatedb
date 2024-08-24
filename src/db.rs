@@ -18,6 +18,7 @@ use crate::tablestore::TableStore;
 use crate::types::ValueDeletable;
 use bytes::Bytes;
 use fail_parallel::FailPointRegistry;
+use log::warn;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use parking_lot::{Mutex, RwLock};
@@ -134,6 +135,8 @@ impl DbInner {
     pub async fn put_with_options(&self, key: &[u8], value: &[u8], options: &WriteOptions) {
         assert!(!key.is_empty(), "key cannot be empty");
 
+        self.maybe_apply_backpressure().await;
+
         // Clone memtable to avoid a deadlock with flusher thread.
         let current_table = if self.wal_enabled() {
             let mut guard = self.state.write();
@@ -163,6 +166,8 @@ impl DbInner {
     pub async fn delete_with_options(&self, key: &[u8], options: &WriteOptions) {
         assert!(!key.is_empty(), "key cannot be empty");
 
+        self.maybe_apply_backpressure().await;
+
         // Clone memtable to avoid a deadlock with flusher thread.
         let current_table = if self.wal_enabled() {
             let mut guard = self.state.write();
@@ -184,6 +189,28 @@ impl DbInner {
 
         if options.await_flush {
             current_table.await_flush().await;
+        }
+    }
+
+    async fn maybe_apply_backpressure(&self) {
+        loop {
+            let table = {
+                let guard = self.state.read();
+                let state = guard.state();
+                if state.imm_memtable.len() <= self.options.max_unflushed_memtable {
+                    return;
+                }
+                let Some(table) = state.imm_memtable.back() else {
+                    return;
+                };
+                warn!(
+                    "applying backpressure to write by waiting for imm table flush. imm tables({}), max({})",
+                    state.imm_memtable.len(),
+                    self.options.max_unflushed_memtable
+                );
+                table.clone()
+            };
+            table.table().await_flush().await
         }
     }
 
@@ -417,7 +444,8 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CompactorOptions;
+    use crate::config::{CompactorOptions, SizeTieredCompactionSchedulerOptions};
+    use crate::size_tiered_compaction::SizeTieredCompactionSchedulerSupplier;
     use crate::sst_iter::SstIterator;
     #[cfg(feature = "wal_disable")]
     use crate::test_utils::assert_iterator;
@@ -933,6 +961,10 @@ mod tests {
             Some(CompactorOptions {
                 poll_interval: Duration::from_millis(100),
                 max_sst_size: 256,
+                compaction_scheduler: Arc::new(SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default(),
+                )),
+                max_concurrent_compactions: 1,
             }),
         ))
         .await;
@@ -946,6 +978,10 @@ mod tests {
             Some(CompactorOptions {
                 poll_interval: Duration::from_millis(100),
                 max_sst_size: 256,
+                compaction_scheduler: Arc::new(SizeTieredCompactionSchedulerSupplier::new(
+                    SizeTieredCompactionSchedulerOptions::default(),
+                )),
+                max_concurrent_compactions: 1,
             }),
         ))
         .await
@@ -977,6 +1013,8 @@ mod tests {
             #[cfg(feature = "wal_disable")]
             wal_enabled: true,
             manifest_poll_interval: Duration::from_millis(100),
+            max_unflushed_memtable: 2,
+            l0_max_ssts: 8,
             min_filter_keys,
             l0_sst_size_bytes,
             compactor_options,

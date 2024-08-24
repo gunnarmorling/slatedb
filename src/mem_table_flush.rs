@@ -4,6 +4,7 @@ use crate::error::SlateDBError;
 use crate::manifest_store::FenceableManifest;
 use std::sync::Arc;
 use tokio::runtime::Handle;
+use tracing::warn;
 use ulid::Ulid;
 
 pub(crate) enum MemtableFlushThreadMsg {
@@ -48,7 +49,17 @@ impl MemtableFlusher {
     pub(crate) async fn flush_imm_memtables_to_l0(&mut self) -> Result<(), SlateDBError> {
         while let Some(imm_memtable) = {
             let rguard = self.db_inner.state.read();
-            rguard.state().imm_memtable.back().cloned()
+            if rguard.state().core.l0.len() >= self.db_inner.options.l0_max_ssts {
+                warn!(
+                    "too many l0 files {} > {}. Won't flush imm to l0",
+                    rguard.state().core.l0.len(),
+                    self.db_inner.options.l0_max_ssts
+                );
+                rguard.state().core.log_db_runs();
+                None
+            } else {
+                rguard.state().imm_memtable.back().cloned()
+            }
         } {
             let id = SsTableId::Compacted(Ulid::new());
             let sst_handle = self
@@ -59,6 +70,7 @@ impl MemtableFlusher {
                 let mut guard = self.db_inner.state.write();
                 guard.move_imm_memtable_to_l0(imm_memtable.clone(), sst_handle);
             }
+            imm_memtable.table().notify_flush();
             self.write_manifest_safely().await?;
         }
         Ok(())
@@ -90,6 +102,10 @@ impl DbInner {
                         if !is_stopped {
                             if let Err(err) = flusher.load_manifest().await {
                                 print!("error loading manifest: {}", err);
+                            }
+                            match flusher.flush_imm_memtables_to_l0().await {
+                                Ok(_) => {}
+                                Err(err) => print!("error from memtable flush: {}", err),
                             }
                         }
                     }

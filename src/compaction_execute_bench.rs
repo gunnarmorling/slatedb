@@ -1,5 +1,5 @@
 use crate::compactor_executor::{CompactionExecutor, CompactionJob, TokioCompactionExecutor};
-use crate::config::DEFAULT_COMPACTOR_OPTIONS;
+use crate::config::CompactorOptions;
 use crate::db_state::{SSTableHandle, SsTableId};
 use crate::error::SlateDBError;
 use crate::sst::SsTableFormat;
@@ -196,7 +196,7 @@ fn run_bench(
     table_store: Arc<TableStore>,
 ) -> Result<(), SlateDBError> {
     let (tx, rx) = crossbeam_channel::unbounded();
-    let compactor_options = DEFAULT_COMPACTOR_OPTIONS.clone();
+    let compactor_options = CompactorOptions::default();
     let executor = TokioCompactionExecutor::new(
         handle.clone(),
         Arc::new(compactor_options),
