@@ -250,6 +250,7 @@ fn load_compaction_as_job(
     let srs: Vec<_> = compaction.sources.iter()
         .map(|sr| srs_by_id.get(&sr.unwrap_sorted_run()).unwrap().clone())
         .collect();
+    info!("loaded compaction job");
     CompactionJob {
         destination: 0,
         ssts: vec![],
@@ -271,8 +272,10 @@ fn run_bench(
         tx,
         table_store.clone(),
     );
+    info!("load compaction job");
     let job = match &options.compaction{
         Some(compaction) => {
+            info!("load job from existing compaction");
             let path = Path::from(options.path.as_str());
             let manifest_store = Arc::new(ManifestStore::new(&path, os.clone()));
             let manifest = handle.block_on(StoredManifest::load(manifest_store))
