@@ -9,6 +9,7 @@ use slatedb::error::SlateDBError;
 #[cfg(feature = "db_bench")] use crate::args::{DbBenchArgs, DbBenchCommand, parse_args, Provider};
 #[cfg(feature = "db_bench")] use crate::db_bench::DbBench;
 #[cfg(feature = "db_bench")] use env_logger;
+use object_store::aws::{DynamoCommit, S3ConditionalPut};
 
 #[cfg(feature = "db_bench")] mod args;
 #[cfg(feature = "db_bench")] mod db_bench;
@@ -32,6 +33,7 @@ fn load_object_store(args: &DbBenchArgs) -> Result<Arc<dyn ObjectStore>, SlateDB
                         .with_secret_access_key(aws_secret.as_str())
                         .with_bucket_name(args.bucket.as_ref().unwrap().as_str())
                         .with_region(args.region.as_ref().unwrap().as_str())
+                        .with_conditional_put(S3ConditionalPut::Dynamo(DynamoCommit::new(String::from("test-slatedb"))))
                         .build()?,
                 ) as Arc<dyn ObjectStore>
             }
