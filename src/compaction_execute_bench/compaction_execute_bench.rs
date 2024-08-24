@@ -7,5 +7,6 @@ fn run_compaction_execute_bench() -> Result<(), slatedb::error::SlateDBError> {
 }
 
 fn main() {
+    env_logger::init();
     run_compaction_execute_bench().unwrap();
 }
