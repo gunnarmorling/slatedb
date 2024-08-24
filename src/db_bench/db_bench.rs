@@ -228,7 +228,10 @@ impl StatsRecorderInner {
             .filter(|w| w.start > since)
             .map(|w| w.start)
             .min();
-        windows.front().map(|w| (w.start, start.unwrap(), sum))
+        if let Some(start) = start {
+            return windows.front().map(|w| (w.start, start, sum));
+        }
+        None
     }
 
     fn records_written_since(&self, since: Instant) -> Option<(Instant, Instant, u64)> {
