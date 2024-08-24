@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::Peekable;
 use std::slice::Iter;
@@ -99,7 +99,7 @@ impl BackpressureChecker {
                 if self.longest_compactable_runs_by_sr
                     .get(&next_sr.source.unwrap_sorted_run())
                     .map(|r| r.len())
-                    .unwrap_or(0) >= self.max_compaction_sources {
+                    .unwrap_or(0) >= self.max_compaction_sources * 2 {
                     return false;
                 }
             }
@@ -246,15 +246,15 @@ impl SizeTieredCompactionScheduler{
         checker: Option<&CompactionChecker>,
     ) -> VecDeque<CompactionSource> {
         let mut compactable_runs = VecDeque::new();
-        let mut maybe_max_sz = None;
+        let mut maybe_min_sz = None;
         while let Some(src) = sources.next() {
-            if let Some(max_sz) = maybe_max_sz {
-                if src.size > ((max_sz as f32) * size_threshold) as u64 {
+            if let Some(min_sz) = maybe_min_sz {
+                if src.size > ((min_sz as f32) * size_threshold) as u64 {
                     break;
                 }
-                maybe_max_sz = Some(max(max_sz, src.size));
+                maybe_min_sz = Some(min(min_sz, src.size));
             } else {
-                maybe_max_sz = Some(src.size);
+                maybe_min_sz = Some(src.size);
             }
             compactable_runs.push_back(src.clone());
             if let Some(checker) = checker {
